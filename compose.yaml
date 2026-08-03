@@ -1,0 +1,84 @@
+# A whole tapes deployment with the export cassette in it: Postgres, the tapes
+# API, and the cassette beside it.
+#
+# The point of running all three is that a cassette is only observable through
+# core. Started alone, the export cassette is an HTTP server with an OpenAPI
+# document and nothing to fetch it; started here, tapes admits it, republishes
+# its paths under /v1/cassettes/export, and answers for it in discovery.
+#
+#   docker compose up --build -d
+#   curl localhost:8081/v1/cassettes
+#
+# The tapes service is built from a sibling checkout of the tapes repository
+# (see `build.context` below) — adjust the path, or swap in a published tapes
+# image, to match your layout.
+name: tapes-export
+
+services:
+  postgres:
+    image: public.ecr.aws/g4e5l3z3/papercomputeco/postgres:17.7-pgduckdb-1.1.1
+    environment:
+      POSTGRES_DB: tapes
+      POSTGRES_USER: tapes
+      POSTGRES_PASSWORD: tapes
+    # There is no `ports:` here on purpose. Everything that talks to this
+    # database is on the compose network, and 5432 on the host is the port a
+    # tapes stack someone is already running has taken.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the cassette's read-only role. Postgres runs this once, when
+      # the data directory is first initialized — `docker compose down -v` to
+      # re-run it.
+      - ./provision.sql:/docker-entrypoint-initdb.d/10-cassette-role.sql:ro
+    healthcheck:
+      # -h forces TCP: while initdb runs the provisioning script above,
+      # Postgres has a temporary server up that listens on the unix socket
+      # only, so a bare `pg_isready` reports healthy before anything can
+      # connect over the network.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tapes -d tapes"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  export:
+    build: .
+    ports:
+      - "127.0.0.1:9998:9998"
+    environment:
+      CASSETTE_NAME: export
+      CASSETTE_LISTEN: 0.0.0.0:9998
+      # The read-only credential the deployment provisioned in provision.sql,
+      # under the role name the manifest derives. Tapes neither creates this
+      # role nor injects this value: the cassette declares what it needs and
+      # the thing that starts it supplies it. Set it empty to watch the export
+      # endpoints answer 501 while the anchors stay up.
+      TAPES_DATABASE_URL: ${EXPORT_DATABASE_URL:-postgres://cassette_export:cassette@postgres:5432/tapes?sslmode=disable}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tapes:
+    # A sibling checkout of the tapes repository. The cassette is a separate
+    # repo with its own module; the two build contexts meeting only here is
+    # the same fact as the cassette having its own go.mod.
+    build:
+      context: ../../tapes.git/main
+      dockerfile: Dockerfile
+    command: >-
+      serve api
+      --listen 0.0.0.0:8081
+      --postgres postgres://tapes:tapes@postgres:5432/tapes?sslmode=disable
+      --cassettes http://export:9998/openapi
+      --cassette-refresh 10s
+    ports:
+      - "127.0.0.1:8081:8081"
+    # Only Postgres is required to start. The cassette is deliberately absent:
+    # core retries an unresolved source through startup and then on every
+    # refresh, so a cassette that is slow, restarting, or briefly broken is an
+    # ordinary state rather than a boot failure.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

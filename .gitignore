@@ -12,3 +12,6 @@ result-*
 *.swp
 *.swo
 .DS_Store
+
+# Go build artifacts
+/build

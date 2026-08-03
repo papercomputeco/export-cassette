@@ -1,0 +1,57 @@
+# The export cassette's publishable manifest.
+#
+# This is the authored form of the metadata this cassette serves at `/openapi`
+# under the `x-tapes-cassette` extension. It is the artifact a registry or an
+# orchestrator reads *before* anything is running: what image to pull, what port
+# it listens on, which contract of tapes it needs, and what a deployment has to
+# provision for it.
+#
+# It must stay in sync with the embedded copy in openapi.go — they are two
+# encodings of one schema, and for the same installation identity their
+# canonical manifest digests must match.
+#
+# The tapes API server reads none of this. Core discovers and aggregates a
+# cassette purely from the OpenAPI document it fetches over HTTP; this file is
+# for whoever has to start the thing in the first place.
+
+kind = "cassette/v1alpha1"
+
+# Who this cassette is, and what a deployment needs in order to run it.
+#
+# `name` is the identity everything else derives from: the route
+# (/v1/cassettes/export), the Postgres schema ("export"), and the role
+# ("cassette_export").
+[cassette]
+name = "export"
+version = "0.1.0"
+display_name = "Export"
+description = "Session export as JSONL: the tapes export surface as a cassette."
+license = "Apache-2.0"
+homepage = "https://github.com/papercomputeco/export-cassette"
+image = "tapes/export-cassette:0.1.0"
+port = 9998
+
+# What this cassette needs from tapes.
+#
+# `core` is a major contract version, not a release: it names the tapes read
+# surface this cassette was written against. `views` are the contract views it
+# wants SELECT on — the whole derived read model, because an export is a read
+# of all of it. The declaration derives the grant plan
+# (tapes_v1.sessions, tapes_v1.span_links, tapes_v1.span_turns, tapes_v1.spans);
+# until tapes publishes those contract views, the deployment grants SELECT on
+# the physical tables they will front (see provision.sql).
+[depends]
+core = "v1"
+views = ["sessions", "span_links", "span_turns", "spans"]
+
+# Where the things core needs live on this cassette's own listener.
+#
+# This process serves its API under /api/export; core republishes it under
+# /v1/cassettes/export.
+[api]
+health = "/ping"
+openapi = "/openapi"
+prefix_path = "api"
+
+# No [[tables]]: this cassette owns no schema objects. It is a pure read
+# surface over the tapes read model and never writes.
