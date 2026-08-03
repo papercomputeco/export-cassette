@@ -1,0 +1,14 @@
+# Rust build artifacts
+/target
+
+# Nix
+result
+result-*
+.direnv/
+
+# Local environment and editor state
+.env
+.env.*
+*.swp
+*.swo
+.DS_Store
