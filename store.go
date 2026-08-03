@@ -23,9 +23,11 @@ import (
 // the v1 contract; until tapes publishes tapes_v1.* contract views, the
 // deployment grants SELECT on the physical tables the views will front:
 // sessions, span_turns_20260615, spans_20260615, span_links_20260615.
-
-// singleTenantOrgID mirrors core's fixed single-tenant org scope.
-const singleTenantOrgID = "00000000-0000-0000-0000-000000000000"
+//
+// Tapes removed the organization concept (tapes#276): a deployment serves
+// exactly one tenant, and the residual org_id columns are sentinel-valued
+// dead weight awaiting their drop migration. These queries therefore
+// never name org_id, so they work identically before and after the drop.
 
 // sessionRecord is the flat sessions-table row (core's
 // storage.SessionRecord, minus fields the export wire never carries).
@@ -228,11 +230,11 @@ func scanSessionRecord(row pgx.Rows, withSortVal bool) (sessionRecord, error) {
 // (a turn started in [since, until), the same predicate core's list and
 // /v1/stats share) and resumable via the keyset cursor.
 func (s *store) ListSessionRecords(ctx context.Context, opts sessionListOpts) ([]sessionRecord, error) {
-	named := pgx.NamedArgs{"org_id": singleTenantOrgID, "lim": int32(opts.Limit)} //nolint:gosec // limit bounded by the handler
-	where := []string{"org_id = @org_id"}
+	named := pgx.NamedArgs{"lim": int32(opts.Limit)} //nolint:gosec // limit bounded by the handler
+	where := []string{"TRUE"}
 
 	if opts.Since != nil || opts.Until != nil {
-		conds := []string{"t.session_id = sessions.id", "t.org_id = @org_id"}
+		conds := []string{"t.session_id = sessions.id"}
 		if opts.Since != nil {
 			named["since"] = *opts.Since
 			conds = append(conds, "t.started_at >= @since::timestamptz")
@@ -277,11 +279,10 @@ func (s *store) ListSessionRecords(ctx context.Context, opts sessionListOpts) ([
 }
 
 // GetSessionRecord returns a single session by its UUID, or nil if not
-// found under the org.
+// found.
 func (s *store) GetSessionRecord(ctx context.Context, id string) (*sessionRecord, error) {
 	rows, err := s.pool.Query(ctx,
-		"SELECT "+sessionColumns+" FROM sessions WHERE org_id = $1 AND id = $2",
-		singleTenantOrgID, id)
+		"SELECT "+sessionColumns+" FROM sessions WHERE id = $1", id)
 	if err != nil {
 		return nil, fmt.Errorf("get session record: %w", err)
 	}
@@ -362,6 +363,9 @@ ORDER BY session_id, (synthetic = '' AND TRIM(user_prompt) <> '') DESC, started_
 // in the presentation order core serves them (started_at ASC, trace_id
 // ASC).
 func (s *store) ListTraceSummaries(ctx context.Context, sessionID string) ([]traceSummaryRecord, error) {
+	// The span count is a correlated subquery rather than a LEFT JOIN +
+	// GROUP BY on the turn's primary key, so the query never names the
+	// residual org_id column and survives its drop migration unchanged.
 	rows, err := s.pool.Query(ctx, `
 SELECT t.trace_id, t.user_prompt, t.response_preview, t.synthetic,
        t.status, t.source, t.started_at, t.ended_at, t.duration_ns,
@@ -369,11 +373,9 @@ SELECT t.trace_id, t.user_prompt, t.response_preview, t.synthetic,
        t.main_input_tokens, t.main_output_tokens,
        t.cache_read_tokens, t.cache_creation_tokens,
        COALESCE(t.total_cost_usd, 0)::float8,
-       count(s.span_id) AS span_count
+       (SELECT count(*) FROM spans_20260615 s WHERE s.trace_id = t.trace_id) AS span_count
 FROM span_turns_20260615 t
-LEFT JOIN spans_20260615 s ON s.org_id = t.org_id AND s.trace_id = t.trace_id
 WHERE t.session_id = $1
-GROUP BY t.org_id, t.trace_id
 ORDER BY t.started_at ASC, t.trace_id ASC
 `, sessionID)
 	if err != nil {
@@ -438,9 +440,9 @@ SELECT trace_id, span_id, parent_span_id, kind, name, status, call_kind,
        thread_id, model, stop_reason, started_at, duration_ns, seq,
        input, output, usage, raw_turn_id, verdict
 FROM spans_20260615
-WHERE org_id = $1 AND trace_id = $2
+WHERE trace_id = $1
 ORDER BY seq ASC, started_at ASC, span_id ASC
-`, singleTenantOrgID, traceID)
+`, traceID)
 	if err != nil {
 		return nil, fmt.Errorf("list spans by trace: %w", err)
 	}

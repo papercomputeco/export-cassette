@@ -309,7 +309,7 @@ func (c *app) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 	// The 30-day window is the maximum span for v1, not just the
 	// default: the floor is enforced unconditionally, even when the
 	// caller supplies an explicit since older than 30 days, so the
-	// endpoint can never be used to stream an org's entire history.
+	// endpoint can never be used to stream the deployment's entire history.
 	// In-window since/until overrides still work — only the lower bound
 	// is clamped.
 	floor := time.Now().UTC().AddDate(0, 0, -30)

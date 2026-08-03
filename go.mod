@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/papercomputeco/tapes v0.29.1-0.20260731172125-6224e51e362e
+	github.com/papercomputeco/tapes v0.31.0
 )
 
 require (
