@@ -360,6 +360,10 @@ func (c *app) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 	// Once bytes are flowing the HTTP status is committed; a failure
 	// mid-stream can only be logged and the loop stopped — the same
 	// accepted tradeoff core documents on its streaming bulk endpoint.
+	// Before the first body byte, though, net/http has not committed
+	// anything (unlike core's fiber stream writer, which commits the 200
+	// up front), so an initial-page failure can still return the
+	// documented JSON 500 instead of masquerading as an empty export.
 	ctx := r.Context()
 	flush := func() error { return http.NewResponseController(w).Flush() }
 
@@ -368,13 +372,19 @@ func (c *app) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 		Until: until,
 		Limit: exportSessionsPageLimit,
 	}
+	streamed := false
 	for {
 		sessions, err := c.store.ListSessionRecords(ctx, opts)
 		if err != nil {
 			c.logger.Error("list sessions for export", "error", err)
+			if !streamed {
+				w.Header().Del("Content-Disposition")
+				writeError(w, http.StatusInternalServerError, "failed to list sessions")
+			}
 			return
 		}
 		for _, sess := range sessions {
+			streamed = true
 			if err := exportSessionLine(ctx, c.store, sess, detail, w); err != nil {
 				c.logger.Error("export session", "id", sess.ID, "error", err)
 				return
