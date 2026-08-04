@@ -219,6 +219,21 @@ func writeJSONRaw(w io.Writer, s string) error {
 	return err
 }
 
+// countingWriter counts the bytes that actually reached the underlying
+// writer, so the bulk handler knows whether the response is still
+// uncommitted (zero bytes → a clean JSON 500 is possible) or already
+// streaming (any bytes → only truncation remains).
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
 // exportFilename appends the non-default grain to an export filename so
 // a traces-grain download is distinguishable from a full one on disk.
 func exportFilename(base string, detail exportDetail) string {
@@ -372,21 +387,29 @@ func (c *app) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 		Until: until,
 		Limit: exportSessionsPageLimit,
 	}
-	streamed := false
+	// The 500 gate is "no body byte has reached the wire yet", not "no
+	// session attempted": both grains run reads (trace summaries, links)
+	// before their first write, so a first-session query failure still
+	// has a clean response available. The counting writer is what makes
+	// that distinction exact.
+	body := &countingWriter{w: w}
+	fail := func(msg string) {
+		if body.n == 0 {
+			w.Header().Del("Content-Disposition")
+			writeError(w, http.StatusInternalServerError, msg)
+		}
+	}
 	for {
 		sessions, err := c.store.ListSessionRecords(ctx, opts)
 		if err != nil {
 			c.logger.Error("list sessions for export", "error", err)
-			if !streamed {
-				w.Header().Del("Content-Disposition")
-				writeError(w, http.StatusInternalServerError, "failed to list sessions")
-			}
+			fail("failed to list sessions")
 			return
 		}
 		for _, sess := range sessions {
-			streamed = true
-			if err := exportSessionLine(ctx, c.store, sess, detail, w); err != nil {
+			if err := exportSessionLine(ctx, c.store, sess, detail, body); err != nil {
 				c.logger.Error("export session", "id", sess.ID, "error", err)
+				fail("failed to render session export")
 				return
 			}
 			// Flush after each session so bytes reach the client
