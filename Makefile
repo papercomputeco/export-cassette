@@ -2,7 +2,7 @@ IMAGE ?= tapes/export-cassette:0.1.0
 
 .PHONY: check
 check: ## Runs the dagger checks
-	dagger check 
+	dagger check
 
 .PHONY: build
 build: ## Builds the cassette binary
