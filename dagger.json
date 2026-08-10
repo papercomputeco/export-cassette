@@ -1,0 +1,27 @@
+{
+  "name": "export-cassette",
+  "engineVersion": "v0.21.7",
+  "sdk": {
+    "source": "go"
+  },
+  "toolchains": [
+    {
+      "name": "go",
+      "source": "github.com/papercomputeco/daggerverse/go@main",
+      "pin": "822a736da394c1be12607134387efc760a71857e"
+    },
+    {
+      "name": "golangcilint",
+      "source": "github.com/papercomputeco/daggerverse/golangcilint@main",
+      "pin": "822a736da394c1be12607134387efc760a71857e"
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "dockerimage",
+      "source": "github.com/papercomputeco/daggerverse/dockerimage@main",
+      "pin": "822a736da394c1be12607134387efc760a71857e"
+    }
+  ],
+  "source": ".dagger"
+}
