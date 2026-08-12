@@ -20,9 +20,9 @@ import (
 // so the cassette's row sets and orderings match core's byte for byte.
 //
 // The cassette's manifest declares these relations as `depends.views` on
-// the v1 contract; until tapes publishes tapes_v1.* contract views, the
-// deployment grants SELECT on the physical tables the views will front:
-// sessions, span_turns_20260615, spans_20260615, span_links_20260615.
+// the v1 contract, and the queries read exactly those views: tapes_v1
+// names hold stable across tapes' projection-generation rotations, which
+// is what makes SELECT on them a grant that cannot silently expire.
 //
 // Tapes removed the organization concept (tapes#276): a deployment serves
 // exactly one tenant, and the residual org_id columns are sentinel-valued
@@ -244,7 +244,7 @@ func (s *store) ListSessionRecords(ctx context.Context, opts sessionListOpts) ([
 			conds = append(conds, "t.started_at < @until::timestamptz")
 		}
 		where = append(where,
-			"EXISTS (SELECT 1 FROM span_turns_20260615 t WHERE "+strings.Join(conds, " AND ")+")")
+			"EXISTS (SELECT 1 FROM tapes_v1.span_turns t WHERE "+strings.Join(conds, " AND ")+")")
 	}
 	if opts.CursorVal != nil && opts.CursorID != nil {
 		named["cursor_val"] = *opts.CursorVal
@@ -254,7 +254,7 @@ func (s *store) ListSessionRecords(ctx context.Context, opts sessionListOpts) ([
 				"(last_seen_at = @cursor_val::timestamptz AND id < @cursor_id::uuid))")
 	}
 
-	q := "SELECT " + sessionColumns + ", last_seen_at::text AS sort_val FROM sessions WHERE " +
+	q := "SELECT " + sessionColumns + ", last_seen_at::text AS sort_val FROM tapes_v1.sessions WHERE " +
 		strings.Join(where, " AND ") + " ORDER BY last_seen_at DESC, id DESC LIMIT @lim"
 
 	rows, err := s.pool.Query(ctx, q, named)
@@ -282,7 +282,7 @@ func (s *store) ListSessionRecords(ctx context.Context, opts sessionListOpts) ([
 // found.
 func (s *store) GetSessionRecord(ctx context.Context, id string) (*sessionRecord, error) {
 	rows, err := s.pool.Query(ctx,
-		"SELECT "+sessionColumns+" FROM sessions WHERE id = $1", id)
+		"SELECT "+sessionColumns+" FROM tapes_v1.sessions WHERE id = $1", id)
 	if err != nil {
 		return nil, fmt.Errorf("get session record: %w", err)
 	}
@@ -334,7 +334,7 @@ func (s *store) getSessionPreviews(ctx context.Context, sessions []sessionRecord
 
 	rows, err := s.pool.Query(ctx, `
 SELECT DISTINCT ON (session_id) session_id::text, user_prompt
-FROM span_turns_20260615
+FROM tapes_v1.span_turns
 WHERE session_id = ANY($1::uuid[])
 ORDER BY session_id, (synthetic = '' AND TRIM(user_prompt) <> '') DESC, started_at ASC
 `, ids)
@@ -373,8 +373,8 @@ SELECT t.trace_id, t.user_prompt, t.response_preview, t.synthetic,
        t.main_input_tokens, t.main_output_tokens,
        t.cache_read_tokens, t.cache_creation_tokens,
        COALESCE(t.total_cost_usd, 0)::float8,
-       (SELECT count(*) FROM spans_20260615 s WHERE s.trace_id = t.trace_id) AS span_count
-FROM span_turns_20260615 t
+       (SELECT count(*) FROM tapes_v1.spans s WHERE s.trace_id = t.trace_id) AS span_count
+FROM tapes_v1.span_turns t
 WHERE t.session_id = $1
 ORDER BY t.started_at ASC, t.trace_id ASC
 `, sessionID)
@@ -411,7 +411,7 @@ ORDER BY t.started_at ASC, t.trace_id ASC
 func (s *store) ListSessionLinks(ctx context.Context, sessionID string) ([]spanLinkRecord, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT from_trace_id, from_span_id, from_io, to_trace_id, to_span_id, to_io, kind
-FROM span_links_20260615
+FROM tapes_v1.span_links
 WHERE session_id = $1
 ORDER BY from_trace_id, from_span_id, to_trace_id, to_span_id, from_io, to_io
 `, sessionID)
@@ -439,7 +439,7 @@ func (s *store) ListTraceSpans(ctx context.Context, traceID string) ([]spanRecor
 SELECT trace_id, span_id, parent_span_id, kind, name, status, call_kind,
        thread_id, model, stop_reason, started_at, duration_ns, seq,
        input, output, usage, raw_turn_id, verdict
-FROM spans_20260615
+FROM tapes_v1.spans
 WHERE trace_id = $1
 ORDER BY seq ASC, started_at ASC, span_id ASC
 `, traceID)
