@@ -37,9 +37,9 @@ port = 9998
 # surface this cassette was written against. `views` are the contract views it
 # wants SELECT on — the whole derived read model, because an export is a read
 # of all of it. The declaration derives the grant plan
-# (tapes_v1.sessions, tapes_v1.span_links, tapes_v1.span_turns, tapes_v1.spans);
-# until tapes publishes those contract views, the deployment grants SELECT on
-# the physical tables they will front (see provision.sql).
+# (tapes_v1.sessions, tapes_v1.span_links, tapes_v1.span_turns, tapes_v1.spans),
+# which core's migrations publish; the deployment grants those views and
+# nothing else (see provision.sql).
 [depends]
 core = "v1"
 views = ["sessions", "span_links", "span_turns", "spans"]

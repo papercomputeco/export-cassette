@@ -23,12 +23,12 @@ credential its deployment supplies.
 ## Data access
 
 The manifest declares `depends.views = ["sessions", "span_links",
-"span_turns", "spans"]` on the `v1` contract. Tapes does not yet publish
-`tapes_v1.*` contract views, so the example deployment grants the cassette
-role SELECT on the physical read-model tables those views will front
-(`sessions`, `span_turns_20260615`, `spans_20260615`, `span_links_20260615`)
-via `ALTER DEFAULT PRIVILEGES` in [`provision.sql`](provision.sql). When the
-contract views land, the grants move there and nothing else changes.
+"span_turns", "spans"]` on the `v1` contract, and the queries read exactly
+those `tapes_v1.*` views — names that hold stable across tapes'
+projection-generation rotations. The example deployment covers them with
+`ALTER DEFAULT PRIVILEGES` in [`provision.sql`](provision.sql), since the
+views are created by tapes' migrations after init; a production deployment
+grants USAGE on `tapes_v1` and SELECT on the declared views directly.
 
 Without `TAPES_DATABASE_URL` the process still starts and serves its anchors;
 the export endpoints answer `501`, mirroring core's answer when its driver
