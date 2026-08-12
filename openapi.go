@@ -112,9 +112,9 @@ func cassetteManifest(name string) map[string]any {
 			"version":      "0.1.0",
 			"display_name": "Export",
 			"description":  "Session export as JSONL: the tapes export surface as a cassette.",
-			"license":      "Apache-2.0",
+			"license":      "MIT OR Apache-2.0",
 			"homepage":     "https://github.com/papercomputeco/export-cassette",
-			"image":        "tapes/export-cassette:0.1.0",
+			"image":        "public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:v0.1.0",
 			"port":         9998,
 		},
 		"depends": map[string]any{
