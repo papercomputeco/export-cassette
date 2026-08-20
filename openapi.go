@@ -46,12 +46,14 @@ func openAPIDocument(name string) []byte {
 			Description("Streams one JSON line per session in the given window, newest-first, as a "+
 				"downloadable attachment. Each line is the session object with its traces, each trace "+
 				"carrying its full spans — the same shape as GET /v1/sessions/{id}/traces with "+
-				"payload=full. detail=traces exports turn headers only (no spans or links). Defaults to "+
-				"the trailing 30 days. Not bounded by the /v1/sessions list cap — pages internally.").
+				"payload=full. detail=traces exports turn headers only (no spans or links). Thirty days "+
+				"is the maximum window as well as the default: an earlier since is clamped to it. "+
+				"Not bounded by the /v1/sessions list cap — pages internally.").
 			Tag(name).
 			QueryParam("since", oas.String(oas.Format("date-time")),
 				oas.ParamDescription("Only include sessions with a turn started at or after this "+
-					"RFC3339 timestamp (activity window; default: now - 30 days)")).
+					"RFC3339 timestamp (activity window; default and floor: now - 30 days, "+
+					"earlier values are clamped)")).
 			QueryParam("until", oas.String(oas.Format("date-time")),
 				oas.ParamDescription("Only include sessions with a turn started before this RFC3339 "+
 					"timestamp (activity window)")).
