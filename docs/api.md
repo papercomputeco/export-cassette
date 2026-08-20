@@ -24,9 +24,14 @@ Streams one JSON line per session in a time window, newest first.
 
 | Parameter | Type | Meaning |
 | --- | --- | --- |
-| `since` | RFC3339 | Only sessions with a turn started at or after this timestamp. Defaults to 30 days ago. |
+| `since` | RFC3339 | Only sessions with a turn started at or after this timestamp. Defaults to 30 days ago, and is clamped to it. |
 | `until` | RFC3339 | Only sessions with a turn started before this timestamp. |
 | `detail` | `spans` \| `traces` | Export granularity. |
+
+**Thirty days is the maximum window, not just the default.** The floor is enforced
+unconditionally: a `since` older than 30 days ago is silently clamped to it, so
+asking for 90 days returns 30 without an error. Narrowing still works — only the
+lower bound is clamped, and an in-window `since`/`until` is honored as given.
 
 `since` and `until` describe an *activity* window — they filter on when a session's
 turns started, not on when the session was created.

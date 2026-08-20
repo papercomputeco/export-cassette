@@ -9,7 +9,7 @@ Tapes does not start cassettes. A deployment starts the process, supplies its
 configuration and credentials, and tells tapes where to find its OpenAPI document.
 
 ```text
-public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:<version>
+public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:v<version>
 ```
 
 Tags are the published release versions — see
