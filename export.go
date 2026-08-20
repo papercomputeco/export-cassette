@@ -234,6 +234,105 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// exportHoldBytes is how much of a single-session export holdingWriter keeps
+// in memory before it commits the response and streams the remainder.
+//
+// It buys error quality, not throughput: everything under the budget can
+// still fail into a clean JSON 500, and the cost of that is bounded by this
+// constant instead of by the session. Sessions in production run from under
+// a megabyte to well past a hundred, so a few megabytes covers the ordinary
+// case outright while the outliers — the ones that made buffering the whole
+// line untenable — stream.
+const exportHoldBytes = 8 << 20
+
+// holdingWriter defers committing an HTTP response until the export either
+// finishes inside a byte budget or outgrows it.
+//
+// The export endpoints want two things that pull against each other. A
+// failure part-way through a render should not reach the client as a
+// truncated 200 wearing an attachment header — a half-written JSON line is
+// silently corrupt data, which is worse than an error. But a session's export
+// is not bounded: this cassette has rendered a single one past 110 MB, so
+// holding the whole line to preserve that property is what turns an ordinary
+// GET into an OOM.
+//
+// Holding a prefix resolves it. Until the budget is spent the response is
+// uncommitted and a clean error is still available; past it the headers go
+// out and the rest streams, accepting truncation as the only remaining
+// failure mode for exports big enough that the alternative is a dead pod.
+//
+// The budget bounds memory, never the export. Nothing is refused or truncated
+// for being large: an export past the budget streams to completion with a
+// bounded working set, and the only thing that changes at the boundary is
+// what a failure would look like if one happened.
+//
+// The bulk endpoint deliberately does not use this: it must flush after each
+// session so bytes arrive progressively over a long window, and flushing is
+// exactly what committing early means. It gets its narrower answer — a clean
+// error only before the very first byte — from countingWriter.
+type holdingWriter struct {
+	// w receives everything once the response is committed.
+	w io.Writer
+	// commit sets the response headers. It runs exactly once, immediately
+	// before the first byte is written, so nothing an error path needs to
+	// change has been set while a clean error is still possible.
+	commit func()
+	// hold is the byte budget; buf holds the export until it is spent.
+	hold int
+	buf  bytes.Buffer
+
+	committed bool
+}
+
+func (h *holdingWriter) Write(p []byte) (int, error) {
+	if h.committed {
+		return h.w.Write(p)
+	}
+	// Decide before appending, not after. Appending first and then noticing
+	// the budget is spent would copy the write into a buffer about to be
+	// abandoned — so a single write larger than the budget would be held in
+	// full, on top of the caller's own copy of it, which is the allocation
+	// this type exists to avoid. Checking first means the held bytes never
+	// exceed the budget and an oversized write is never copied at all.
+	if h.buf.Len()+len(p) > h.hold {
+		if err := h.release(); err != nil {
+			return 0, err
+		}
+		return h.w.Write(p)
+	}
+	// bytes.Buffer.Write reports no error; it grows or panics.
+	h.buf.Write(p)
+	return len(p), nil
+}
+
+// release commits the response and writes everything held so far.
+func (h *holdingWriter) release() error {
+	h.commit()
+	h.committed = true
+	if h.buf.Len() == 0 {
+		return nil
+	}
+	_, err := h.w.Write(h.buf.Bytes())
+	// Drop the buffer rather than Reset it: Reset keeps the grown backing
+	// array, so every concurrently streaming export would hold the whole
+	// budget for its lifetime having no further use for a byte of it.
+	h.buf = bytes.Buffer{}
+	return err
+}
+
+// Close finishes a successful render. An export that never outgrew the budget
+// is still held entirely in memory, so this is the call that writes it.
+func (h *holdingWriter) Close() error {
+	if h.committed {
+		return nil
+	}
+	return h.release()
+}
+
+// Committed reports whether any byte has reached the response. While it is
+// false the caller still owns the status line and can answer with an error.
+func (h *holdingWriter) Committed() bool { return h.committed }
+
 // exportFilename appends the non-default grain to an export filename so
 // a traces-grain download is distinguishable from a full one on disk.
 func exportFilename(base string, detail exportDetail) string {
@@ -280,23 +379,39 @@ func (c *app) handleExportSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Render into a buffer first so the NDJSON/attachment headers are
-	// only committed once the export succeeds. A single session is
-	// bounded, so buffering is cheap — and a mid-render failure returns a
-	// clean JSON error instead of a 500 body wearing an attachment
-	// header. (The streaming bulk endpoint can't do this; a single
-	// session can.)
-	var buf bytes.Buffer
-	if err := exportSessionLine(r.Context(), c.store, *sess, detail, &buf); err != nil {
-		c.logger.Error("export session", "id", id, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to render session export")
-		return
+	// Hold the first exportHoldBytes of the render, then stream. Every
+	// session exports in full either way; the budget only decides whether a
+	// mid-render failure can still be answered as a clean JSON error or has
+	// to truncate a response already on the wire. The renderer itself
+	// already bounds its working set to one trace's spans, so past the
+	// budget the whole path is O(one trace) no matter how large the session.
+	filename := exportFilename(fmt.Sprintf("session-%s-%s.jsonl", id, time.Now().UTC().Format("2006-01-02")), detail)
+	body := &holdingWriter{
+		w:    w,
+		hold: exportHoldBytes,
+		commit: func() {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		},
 	}
 
-	filename := exportFilename(fmt.Sprintf("session-%s-%s.jsonl", id, time.Now().UTC().Format("2006-01-02")), detail)
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-	_, _ = w.Write(buf.Bytes())
+	if err := exportSessionLine(r.Context(), c.store, *sess, detail, body); err != nil {
+		c.logger.Error("export session", "id", id, "error", err)
+		if !body.Committed() {
+			writeError(w, http.StatusInternalServerError, "failed to render session export")
+			return
+		}
+		// Headers and a prefix of the line are already on the wire, so the
+		// status cannot be changed; stopping here truncates the response,
+		// which is the same tradeoff the bulk endpoint documents.
+		return
+	}
+	if err := body.Close(); err != nil {
+		// Close commits before it writes, so a failure here is the client
+		// going away mid-flush — there is no uncommitted response left to
+		// answer with.
+		c.logger.Error("write session export", "id", id, "error", err)
+	}
 }
 
 // exportSessionsPageLimit is the internal page size handleExportSessions
