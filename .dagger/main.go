@@ -71,6 +71,37 @@ func (m *ExportCassette) image(version string) *dagger.Dockerimage {
 	return image.WithBuildArg("CASSETTE_VERSION", bare)
 }
 
+// goContainer is the Go toolchain every check in this module runs in. Sharing
+// it is what keeps the suite and the release's stamp verification provably on
+// the same Go: two copies of these lines could drift onto different versions
+// and the drift would show up as a release-time failure with no local
+// reproduction.
+func (m *ExportCassette) goContainer() *dagger.Container {
+	return dag.Container().
+		From("golang:1.26-bookworm").
+		WithEnvVariable("CGO_ENABLED", "0").
+		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
+		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
+		WithWorkdir("/src").
+		WithDirectory("/src", m.Source)
+}
+
+// Test runs the unit suite, contributed as a check so it is reported beside
+// the go and golangcilint toolchain checks. The name matches the sibling
+// cassettes, whose checks are already `search-cassette:test` and
+// `skills-cassette:test`; this repo was the one without one.
+//
+// -count=1 because a check that can be satisfied from the test cache is not
+// running the thing it claims to run; the mounted build cache is what keeps
+// that affordable.
+//
+// +check
+func (m *ExportCassette) Test(ctx context.Context) (string, error) {
+	return m.goContainer().
+		WithExec([]string{"go", "test", "-count=1", "./..."}).
+		Stdout(ctx)
+}
+
 // verifyStamp proves the release identity reaches the binary before anything
 // is published. `-X` writes to package-level variables only and silently does
 // nothing to a constant or a renamed symbol, so a refactor could otherwise
@@ -83,13 +114,7 @@ func (m *ExportCassette) image(version string) *dagger.Dockerimage {
 // import path when compiled as the package under test, so a stamp there could
 // only ever be verified through a different flag than the one that ships.
 func (m *ExportCassette) verifyStamp(ctx context.Context, version string) error {
-	_, err := dag.Container().
-		From("golang:1.26-bookworm").
-		WithEnvVariable("CGO_ENABLED", "0").
-		WithMountedCache("/go/pkg/mod", dag.CacheVolume("go-mod")).
-		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("go-build")).
-		WithWorkdir("/src").
-		WithDirectory("/src", m.Source).
+	_, err := m.goContainer().
 		WithEnvVariable("CASSETTE_VERSION_WANT", version).
 		WithExec([]string{
 			"go", "test", "-count=1", "-run", "TestReleaseIdentityIsStamped",
