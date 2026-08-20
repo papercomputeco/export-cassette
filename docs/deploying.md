@@ -9,12 +9,13 @@ Tapes does not start cassettes. A deployment starts the process, supplies its
 configuration and credentials, and tells tapes where to find its OpenAPI document.
 
 ```text
-public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:v<version>
+public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:<release-tag>
 ```
 
-Tags are the published release versions — see
-[releases](https://github.com/papercomputeco/export-cassette/releases). Pin one;
-`nightly` exists but is not a release.
+The image tag is the release tag verbatim, `v` and all — copy one from
+[releases](https://github.com/papercomputeco/export-cassette/releases) and use it
+as written, e.g. `…/export-cassette:v0.2.0`. Pin a release; `nightly` is published
+but is not one.
 
 The version is not a number anyone maintains. A release stamps the tag it is
 publishing at link time, and the manifest version, the image reference the
