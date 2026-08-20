@@ -86,16 +86,21 @@ func (m *ExportCassette) goContainer() *dagger.Container {
 		WithDirectory("/src", m.Source)
 }
 
-// CheckTest runs the unit suite, as a check so it joins the ones the go and
+// Test runs the unit suite, as a check so it joins the ones the go and
 // golangcilint toolchains contribute rather than being a second CI mechanism
 // beside them.
+//
+// The name is what makes the reported check `export-cassette:test`, matching
+// `search-cassette:test` and `skills-cassette:test` — the check name is the
+// function name, so the three cassettes only read alike if they are declared
+// alike.
 //
 // -count=1 because a check that can be satisfied from the test cache is not
 // running the thing it claims to run; the mounted build cache is what keeps
 // that affordable.
 //
 // +check
-func (m *ExportCassette) CheckTest(ctx context.Context) (string, error) {
+func (m *ExportCassette) Test(ctx context.Context) (string, error) {
 	return m.goContainer().
 		WithExec([]string{"go", "test", "-count=1", "./..."}).
 		Stdout(ctx)
