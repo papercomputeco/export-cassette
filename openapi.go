@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	oas "github.com/papercomputeco/tapes/pkg/tapesoapi"
+
+	"github.com/papercomputeco/export-cassette/internal/release"
 )
 
 // openAPIDocument renders this cassette's OpenAPI document.
@@ -25,7 +27,7 @@ func openAPIDocument(name string) []byte {
 	parser := oas.NewParser(oas.WithInfo(oas.Info{
 		Title:       "Export Cassette",
 		Description: "The tapes session export surface as a cassette.",
-		Version:     "0.2.0",
+		Version:     release.Version,
 	}))
 
 	provenance := oas.Provenance{Kind: oas.KindManual, Name: "export cassette"}
@@ -109,12 +111,12 @@ func cassetteManifest(name string) map[string]any {
 		"kind": "cassette/v1alpha1",
 		"cassette": map[string]any{
 			"name":         name,
-			"version":      "0.2.0",
+			"version":      release.Version,
 			"display_name": "Export",
 			"description":  "Session export as JSONL: the tapes export surface as a cassette.",
 			"license":      "MIT OR Apache-2.0",
 			"homepage":     "https://github.com/papercomputeco/export-cassette",
-			"image":        "public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:v0.2.0",
+			"image":        "public.ecr.aws/g4e5l3z3/papercomputeco/export-cassette:v" + release.Version,
 			"port":         9998,
 		},
 		"depends": map[string]any{

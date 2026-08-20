@@ -38,6 +38,7 @@ jobs:
             build-push-image \
               --registry=${{ vars.REGISTRY }} \
               --tags="${{ github.event.release.tag_name }}" \
-              --tags="latest"
+              --tags="latest" \
+              --version="${{ github.event.release.tag_name }}"
         env:
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}

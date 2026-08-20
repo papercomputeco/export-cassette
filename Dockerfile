@@ -16,11 +16,20 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY *.go ./
+COPY internal/ internal/
+
+# The release identity this image reports, stamped into the manifest it
+# serves. Left unset the binary keeps internal/release's placeholder, which is
+# what a build from a source tree should say: it is not a release. The release
+# pipeline passes the tag it is publishing.
+ARG CASSETTE_VERSION=0.0.0
 
 # CGO off gives a static binary, which is what lets the final stage be
 # distroless: nothing in this cassette needs libc.
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags="-s -w" -o /out/export-cassette .
+RUN go build -trimpath \
+      -ldflags="-s -w -X github.com/papercomputeco/export-cassette/internal/release.Version=${CASSETTE_VERSION}" \
+      -o /out/export-cassette .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
