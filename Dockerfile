@@ -6,7 +6,9 @@
 # deployment supplies.
 #
 #   docker build -t tapes/export-cassette:0.1.0 .
-FROM golang:1.26 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -27,7 +29,7 @@ ARG CASSETTE_VERSION=0.0.0
 # CGO off gives a static binary, which is what lets the final stage be
 # distroless: nothing in this cassette needs libc.
 ENV CGO_ENABLED=0
-RUN go build -trimpath \
+RUN GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath \
       -ldflags="-s -w -X github.com/papercomputeco/export-cassette/internal/release.Version=${CASSETTE_VERSION}" \
       -o /out/export-cassette .
 
