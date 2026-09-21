@@ -1,0 +1,9 @@
+# Keep the image build context limited to files copied by Dockerfile.
+**
+
+!go.mod
+!go.sum
+
+!*.go
+!internal/
+!internal/**
