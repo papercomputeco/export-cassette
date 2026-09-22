@@ -6,11 +6,12 @@ sidebar:
 ---
 
 ```sh
-make help    # every target
-make build   # build/export-cassette
-make test    # go vet + go test
-make image   # build and load the container image via Dagger
-make check   # the Dagger checks CI runs
+make help          # every target
+make build         # build tapes/export-cassette:0.1.0 with the host container engine
+make build-local   # build/export-cassette
+make test          # go vet + go test
+make image         # compatibility target for the local image build
+make check         # run the Dagger checks
 ```
 
 The cassette is its own Go module. It depends on tapes only as a library —

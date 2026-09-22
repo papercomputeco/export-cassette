@@ -1,20 +1,24 @@
 IMAGE ?= tapes/export-cassette:0.1.0
+CONTAINER_TOOL ?= docker
 
 .PHONY: check
 check: ## Runs the dagger checks
 	dagger check
 
 .PHONY: build
-build: ## Builds the cassette binary
+build: image ## Builds the local development image directly from Dockerfile
+
+.PHONY: build-local
+build-local: ## Builds the cassette binary for the host
+	mkdir -p build
 	go build -o build/export-cassette .
 
 .PHONY: image
-image: ## Builds and loads the cassette container image via Dagger
-	dagger call build-image export-image --name=$(IMAGE)
+image: ## Builds the local development image (override with IMAGE=name:tag)
+	$(CONTAINER_TOOL) build -t $(IMAGE) -f Dockerfile .
 
 .PHONY: check-image
-check-image: ## Builds the cassette container image without loading it
-	dagger call build-image sync
+check-image: image ## Compatibility alias for the former Dagger image check
 
 .PHONY: test
 test: ## Vets and tests

@@ -41,9 +41,10 @@ curl localhost:9998/api/export/sessions
 ## Develop
 
 ```sh
-make help    # every target
-make build   # build/export-cassette
-make test    # go vet + go test
+make help          # every target
+make build         # tapes/export-cassette:0.1.0
+make build-local   # build/export-cassette
+make test          # go vet + go test
 ```
 
 ## License

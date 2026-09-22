@@ -11,8 +11,8 @@
 // linker builds a binary but by its real import path when it is compiled as
 // the package under test — so a symbol in main needs two different flag
 // strings and the release could only ever verify one of them. Here one flag
-// string works in both, which is what lets the release prove the exact stamp
-// it ships (see .dagger/main.go).
+// string works in both, which is what lets the release workflow prove the
+// exact stamp the Dockerfile ships (see release_identity_test.go).
 package release
 
 // Version is the release identity: the manifest's version, the tag in its

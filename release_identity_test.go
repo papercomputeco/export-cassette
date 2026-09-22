@@ -15,9 +15,9 @@ import (
 // images that report the placeholder version forever — the failure this
 // scheme exists to prevent, reintroduced by the mechanism meant to fix it.
 //
-// The release runs this with the same flag it builds the binary with (see
-// .dagger/main.go) and refuses to publish when it fails. An ordinary `go
-// test ./...` skips it: without the flag there is no stamp to check.
+// The release workflow runs this with the same flag the Dockerfile uses and
+// refuses to publish when it fails. An ordinary `go test ./...` skips it:
+// without the flag there is no stamp to check.
 //
 // It is a plain test rather than a Ginkgo spec so the pipeline can select it
 // by name with -run; the Ginkgo suite entry point does not match that filter.

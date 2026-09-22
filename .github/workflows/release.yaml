@@ -12,7 +12,7 @@ jobs:
       id-token: write
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Nix
@@ -20,6 +20,27 @@ jobs:
 
       - name: Cache Nix store
         uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
+      - name: Resolve and verify release identity stamp
+        id: release-identity
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)*$ ]]; then
+            advertised="v$version"
+            if [ "$RELEASE_TAG" != "$advertised" ]; then
+              echo "manifest will advertise $advertised, but release tag is $RELEASE_TAG" >&2
+              exit 1
+            fi
+            CASSETTE_VERSION_WANT="$version" nix develop --command \
+              go test -count=1 -run TestReleaseIdentityIsStamped \
+                -ldflags="-s -w -X github.com/papercomputeco/export-cassette/internal/release.Version=$version" \
+                .
+          else
+            version=0.0.0
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
@@ -32,13 +53,22 @@ jobs:
         with:
           registry-type: public
 
-      - name: Push image
-        run: |
-          nix develop --command dagger call \
-            build-push-image \
-              --registry=${{ vars.REGISTRY }} \
-              --tags="${{ github.event.release.tag_name }}" \
-              --tags="latest" \
-              --version="${{ github.event.release.tag_name }}"
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build and push image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ vars.REGISTRY }}/export-cassette:${{ github.event.release.tag_name }}
+            ${{ vars.REGISTRY }}/export-cassette:latest
+          build-args: |
+            CASSETTE_VERSION=${{ steps.release-identity.outputs.version }}
+          cache-from: type=gha,scope=export-cassette
+          cache-to: type=gha,mode=max,scope=export-cassette
+          provenance: false
+          sbom: false
