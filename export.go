@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -421,10 +422,69 @@ func (c *app) handleExportSession(w http.ResponseWriter, r *http.Request) {
 // sessions fall in the window.
 const exportSessionsPageLimit = 200
 
+// exportWindow is the activity window a bulk export covers. Either bound may
+// be absent: no since reaches back to the deployment's first turn, no until
+// runs to the present.
+type exportWindow struct {
+	Since *time.Time
+	Until *time.Time
+}
+
+// exportWindowFromQuery parses the since/until query parameters into a
+// window. There is no floor: a caller that names no since gets the whole
+// history, and one that names an old since is not clamped. The bulk export
+// exists so a tenant can take everything it has somewhere else, and a
+// window that silently stopped short of that would be the export quietly
+// losing data rather than refusing to. The read model is walked one keyset
+// page at a time and each session streams, so a wider window costs time,
+// not memory.
+//
+// The error is the message to answer 400 with, already worded for the
+// caller; an empty string means the window is valid.
+func exportWindowFromQuery(q url.Values) (exportWindow, string) {
+	var w exportWindow
+	if raw := q.Get("since"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return exportWindow{}, "since must be an RFC3339 timestamp"
+		}
+		w.Since = &t
+	}
+	if raw := q.Get("until"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return exportWindow{}, "until must be an RFC3339 timestamp"
+		}
+		w.Until = &t
+	}
+	if w.Since != nil && w.Until != nil && !w.Until.After(*w.Since) {
+		return exportWindow{}, "until must be after since"
+	}
+	return w, ""
+}
+
+// exportSessionsFilename names a bulk export after the window that produced
+// it. An unbounded window is "all time"; a bounded one carries its dates,
+// with "start" or "now" standing in for an open end, so a file never claims
+// a range it does not hold.
+func exportSessionsFilename(w exportWindow, now time.Time) string {
+	if w.Since == nil && w.Until == nil {
+		return fmt.Sprintf("sessions-all-time-%s.jsonl", now.UTC().Format("2006-01-02"))
+	}
+	start, end := "start", "now"
+	if w.Since != nil {
+		start = w.Since.UTC().Format("2006-01-02")
+	}
+	if w.Until != nil {
+		end = w.Until.UTC().Format("2006-01-02")
+	}
+	return fmt.Sprintf("sessions-%s-to-%s.jsonl", start, end)
+}
+
 // handleExportSessions handles GET /api/export/sessions — core's
 // GET /v1/sessions/export. It streams every session in the requested
-// window (default: trailing 30 days) as one nested JSON line each,
-// paging internally via the same keyset cursor core uses.
+// window (default: the deployment's whole history) as one nested JSON line
+// each, paging internally via the same keyset cursor core uses.
 func (c *app) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 	if c.store == nil {
 		writeError(w, http.StatusNotImplemented, "sessions not supported by this backend")
@@ -435,55 +495,13 @@ func (c *app) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "detail must be spans or traces")
 		return
 	}
-
-	// The 30-day window is the maximum span for v1, not just the
-	// default: the floor is enforced unconditionally, even when the
-	// caller supplies an explicit since older than 30 days, so the
-	// endpoint can never be used to stream the deployment's entire history.
-	// In-window since/until overrides still work — only the lower bound
-	// is clamped.
-	floor := time.Now().UTC().AddDate(0, 0, -30)
-	since := floor
-	if raw := r.URL.Query().Get("since"); raw != "" {
-		t, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "since must be an RFC3339 timestamp")
-			return
-		}
-		since = t
-	}
-	if since.Before(floor) {
-		since = floor
-	}
-	var until *time.Time
-	if raw := r.URL.Query().Get("until"); raw != "" {
-		t, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "until must be an RFC3339 timestamp")
-			return
-		}
-		until = &t
-	}
-	if until != nil && !until.After(since) {
-		writeError(w, http.StatusBadRequest, "until must be after since")
+	window, problem := exportWindowFromQuery(r.URL.Query())
+	if problem != "" {
+		writeError(w, http.StatusBadRequest, problem)
 		return
 	}
 
-	// Name the file after the window that actually produced it. The
-	// default (no since/until) is the trailing 30 days; an explicit
-	// since/until gets a dated range so the filename never claims
-	// "last-30-days" for a narrower window. `since` here is the
-	// effective (clamped) lower bound.
-	now := time.Now().UTC()
-	filename := fmt.Sprintf("sessions-last-30-days-%s.jsonl", now.Format("2006-01-02"))
-	if r.URL.Query().Get("since") != "" || r.URL.Query().Get("until") != "" {
-		end := "now"
-		if until != nil {
-			end = until.UTC().Format("2006-01-02")
-		}
-		filename = fmt.Sprintf("sessions-%s-to-%s.jsonl", since.UTC().Format("2006-01-02"), end)
-	}
-	filename = exportFilename(filename, detail)
+	filename := exportFilename(exportSessionsFilename(window, time.Now()), detail)
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 
@@ -498,8 +516,8 @@ func (c *app) handleExportSessions(w http.ResponseWriter, r *http.Request) {
 	flush := func() error { return http.NewResponseController(w).Flush() }
 
 	opts := sessionListOpts{
-		Since: &since,
-		Until: until,
+		Since: window.Since,
+		Until: window.Until,
 		Limit: exportSessionsPageLimit,
 	}
 	// The 500 gate is "no body byte has reached the wire yet", not "no

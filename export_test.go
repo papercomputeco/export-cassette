@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // holdingWriter is what decides whether a failed export can still answer with
@@ -175,3 +177,76 @@ func TestHoldingWriterStreamsPastTheBudget(t *testing.T) {
 type failingWriter struct{ err error }
 
 func (f failingWriter) Write([]byte) (int, error) { return 0, f.err }
+
+// The bulk window used to clamp every since to the trailing 30 days. The
+// export is how a tenant takes its data elsewhere, so the window must reach
+// back to the first session on record — these pin that nothing narrows it.
+
+func TestExportWindowDefaultsToAllHistory(t *testing.T) {
+	w, problem := exportWindowFromQuery(url.Values{})
+	if problem != "" {
+		t.Fatalf("unexpected problem: %q", problem)
+	}
+	if w.Since != nil || w.Until != nil {
+		t.Fatalf("expected an unbounded window, got since=%v until=%v", w.Since, w.Until)
+	}
+}
+
+func TestExportWindowHonoursAnOldSince(t *testing.T) {
+	old := time.Now().UTC().AddDate(-3, 0, 0).Truncate(time.Second)
+	w, problem := exportWindowFromQuery(url.Values{"since": {old.Format(time.RFC3339)}})
+	if problem != "" {
+		t.Fatalf("unexpected problem: %q", problem)
+	}
+	if w.Since == nil || !w.Since.Equal(old) {
+		t.Fatalf("since was altered: want %v, got %v", old, w.Since)
+	}
+	if w.Until != nil {
+		t.Fatalf("until should be open, got %v", w.Until)
+	}
+}
+
+func TestExportWindowRejectsBadBounds(t *testing.T) {
+	cases := map[string]url.Values{
+		"since not RFC3339": {"since": {"yesterday"}},
+		"until not RFC3339": {"until": {"2026-13-01"}},
+		"until before since": {
+			"since": {"2026-02-01T00:00:00Z"},
+			"until": {"2026-01-01T00:00:00Z"},
+		},
+		"until equal to since": {
+			"since": {"2026-01-01T00:00:00Z"},
+			"until": {"2026-01-01T00:00:00Z"},
+		},
+	}
+	for name, q := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, problem := exportWindowFromQuery(q); problem == "" {
+				t.Fatalf("expected a 400 message for %v", q)
+			}
+		})
+	}
+}
+
+func TestExportSessionsFilenameNamesTheWindow(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	since := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	until := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		w    exportWindow
+		want string
+	}{
+		{"unbounded", exportWindow{}, "sessions-all-time-2026-11-05.jsonl"},
+		{"both", exportWindow{Since: &since, Until: &until}, "sessions-2026-07-01-to-2026-08-01.jsonl"},
+		{"since only", exportWindow{Since: &since}, "sessions-2026-07-01-to-now.jsonl"},
+		{"until only", exportWindow{Until: &until}, "sessions-start-to-2026-08-01.jsonl"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := exportSessionsFilename(tc.w, now); got != tc.want {
+				t.Fatalf("want %q, got %q", tc.want, got)
+			}
+		})
+	}
+}

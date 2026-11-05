@@ -24,27 +24,31 @@ Streams one JSON line per session in a time window, newest first.
 
 | Parameter | Type | Meaning |
 | --- | --- | --- |
-| `since` | RFC3339 | Only sessions with a turn started at or after this timestamp. Defaults to 30 days ago, and is clamped to it. |
-| `until` | RFC3339 | Only sessions with a turn started before this timestamp. |
+| `since` | RFC3339 | Only sessions with a turn started at or after this timestamp. Omit it to start from the first session on record. |
+| `until` | RFC3339 | Only sessions with a turn started before this timestamp. Omit it to run to the present. |
 | `detail` | `spans` \| `traces` | Export granularity. |
 
-**Thirty days is the maximum window, not just the default.** The floor is enforced
-unconditionally: a `since` older than 30 days ago is silently clamped to it, so
-asking for 90 days returns 30 without an error. Narrowing still works — only the
-lower bound is clamped, and an in-window `since`/`until` is honored as given.
+**There is no floor.** A request with no `since` exports the deployment's whole
+history, and an old `since` is honored as given rather than clamped. The bulk
+endpoint exists so a tenant can take everything it has somewhere else; a window
+that silently stopped short of that would be the export losing data rather than
+refusing to. `until` must be after `since` when both are given.
 
 `since` and `until` describe an *activity* window — they filter on when a session's
 turns started, not on when the session was created.
 
-The endpoint pages internally, so the result is not truncated at the read API's
-session list cap.
+The endpoint pages internally and streams each session as it is rendered, so a
+wider window costs time, not memory, and the result is not truncated at the read
+API's session list cap.
 
 Download filenames reflect the window:
 
 ```text
-sessions-last-30-days-2026-08-20.jsonl        # default window
-sessions-2026-07-01-to-2026-08-01.jsonl       # since/until given
-sessions-last-30-days-2026-08-20-traces.jsonl # detail=traces
+sessions-all-time-2026-11-05.jsonl            # no since or until
+sessions-2026-07-01-to-2026-08-01.jsonl       # since and until given
+sessions-2026-07-01-to-now.jsonl              # since only
+sessions-start-to-2026-08-01.jsonl            # until only
+sessions-all-time-2026-11-05-traces.jsonl     # detail=traces
 ```
 
 ## `GET /api/export/sessions/{id}`

@@ -42,8 +42,9 @@ Each output line is one session. Responses are `application/x-ndjson` and arrive
 a download attachment, so a `traces`-grain file is distinguishable from a full one
 on disk by its `-traces.jsonl` suffix.
 
-The bulk endpoint defaults to the trailing 30 days and pages internally, so it is
-not bounded by the read API's session list cap.
+The bulk endpoint covers the deployment's whole history unless narrowed with
+`since`/`until`, and pages internally, so it is not bounded by the read API's
+session list cap.
 
 ## Next
 
